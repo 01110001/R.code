@@ -1,0 +1,171 @@
+---
+title: "Running TSNE on any stock"
+author: "Maxandre Hebert"
+date: "2023-05-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Quick remember
+TSNE is used to find stock that move in a similar way.(Tend to move together)
+To perform a t-sne on stock we need to put each date as a feature(column).
+That took me a long time to do, but it was worth it.
+
+## load library
+```{r}
+library(tidyverse)
+library(Rtsne)
+library(plotly) # for the plot
+library(yfR) #getting stock data
+```
+
+## Getting the data
+
+```{r}
+#Here is just an exemple of ticker
+tickers <- c("AAPL", "GOOGL", "MSFT", "AMZN", "FB", "TSLA", "NVDA", "JNJ", "V", "PG")
+df_sp500 <- yf_index_composition("SP500") %>% filter(ticker %in% tickers)
+  my_df <- yf_get(
+    tickers,
+    first_date = "2007-01-01",
+    last_date = Sys.Date(),
+    thresh_bad_data = FALSE, 
+    bench_ticker = "^GSPC",
+    type_return = "arit",
+    freq_data = "daily",
+    how_to_aggregate = "last",
+    do_complete_data = FALSE,
+    do_cache = TRUE,
+    do_parallel = FALSE,
+    be_quiet = FALSE
+  )
+```
+
+##Data wrangling
+1. We need to find the minimum starting date for stock.
+2. We then put each date as features, to do that we use function pivot_wider
+from the package tidyr.
+-Def : "widens" data, increasing the number of columns and decreasing the number of rows. The inverse transformation is "pivot_longer"
+```{r}
+# Step 1  : Calculate the first date for each stock
+start_dates <- function() {
+  x <- my_df %>%
+  group_by(ticker) %>%
+  summarise(start_date = min(ref_date))
+  
+  return(max(x$start_date))
+}
+
+# Step 2 : filter the data
+filtered_df <- my_df %>% group_by(ticker) %>%
+  select(ticker,ref_date,ret_adjusted_prices) %>%
+  filter(ref_date > start_dates()) %>%
+  pivot_wider(names_from = ref_date, values_from = ret_adjusted_prices)
+
+```
+
+##Deploy the t-sne
+Now we can deploy the t-sne.
+What is t-SNE? t-Distributed Stochastic Neighbor Embedding (t-SNE) is an unsupervised, non-linear technique primarily used for data exploration and visualizing high-dimensional data
+```{r}
+tsne_data <- filtered_df[, -1]  # assuming the first column is `ticker`
+
+tsne_model <- Rtsne(tsne_data, dims = 2, perplexity=1, theta=0.5, check_duplicates=FALSE)
+
+# the left join function is mainly for adding sector to their ticker names
+tsne_results <- data.frame(ticker = filtered_df$ticker, tsne_model$Y) %>%
+  left_join(df_sp500 %>% select(ticker, sector), by = "ticker")
+
+
+
+```
+
+##Data explatory
+```{r}
+p <- ggplot(tsne_results, aes(x = X1, y = X2, text=ticker,color=sector)) +
+  geom_point() +
+  geom_text(aes(label=sector), size=2, vjust=1, hjust=0.5,nudge_y = 0.2) +
+  theme_minimal() +
+  ggtitle("t-SNE plot of Stocks")
+
+p <- ggplotly(p)
+
+p
+
+```
+
+## Bringing all together
+```{r}
+tsne_stock_map <- function(ticker_vector) {
+  require(tidyverse)
+  require(Rtsne)
+  require(plotly) # for the plot
+  require(yfR) #getting stock data
+  #Here is just an exemple of ticker
+  
+  tickers <- ticker_vector
+  df_sp500 <- yf_index_composition("SP500") %>% filter(ticker %in% tickers)
+  my_df <- yf_get(
+      tickers,
+      first_date = "2007-01-01",
+      last_date = Sys.Date(),
+      thresh_bad_data = FALSE, 
+      bench_ticker = "^GSPC",
+      type_return = "arit",
+      freq_data = "daily",
+      how_to_aggregate = "last",
+      do_complete_data = FALSE,
+      do_cache = TRUE,
+      do_parallel = FALSE,
+      be_quiet = FALSE
+    )
+  # Step 1  : Calculate the first date for each stock
+  start_dates <- my_df %>%
+    group_by(ticker) %>%
+    summarise(start_date = min(ref_date)) %>%
+    max()
+  
+  # Step 2 : filter the data
+  filtered_df <- my_df %>% group_by(ticker) %>%
+    select(ticker,ref_date,ret_adjusted_prices) %>%
+    filter(ref_date > start_dates) %>%
+    pivot_wider(names_from = ref_date, values_from = ret_adjusted_prices)
+  
+  tsne_data <- filtered_df[, -1]  # assuming the first column is `ticker`
+
+  tsne_model <- Rtsne(tsne_data, 
+                      dims = 2, 
+                      perplexity=30, 
+                      theta=0.5, 
+                      check_duplicates=FALSE)
+  
+  # the left join function is mainly for adding sector to their ticker names
+  tsne_results <- data.frame(ticker = filtered_df$ticker, tsne_model$Y) %>%
+    left_join(test %>% select(ticker, sector), by = "ticker")
+  
+  p <- ggplot(tsne_results, 
+              aes(x = X1, 
+                  y = X2, 
+                  text=ticker,color=sector)) +
+  geom_point() +
+  geom_text(aes(label=sector), 
+            size=2, 
+            vjust=1, 
+            hjust=0.5,
+            nudge_y = 0.2) +
+  theme_minimal() +
+  ggtitle("t-SNE plot of Stocks")
+
+  p <- ggplotly(p)
+  
+  p
+    
+  
+  return(p,tsne_results)
+}
+
+
+```
